@@ -4,8 +4,7 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-  "build": "echo 'No build needed for plain HTML/JS'",
-  "postinstall": "npx cap sync android"
+  "build": "echo 'No build needed for plain HTML/JS'"
 },
   "keywords": [],
   "author": "",
