@@ -1,3 +1,4 @@
+import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
 function convertArabicNumeralsToEnglish(str) {
   if (!str) return '';
   return str.toString().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
@@ -4467,79 +4468,74 @@ async function loadMapStatistics(filters = {}) {
         Object.values(statsElements).forEach(el => { if (el) { el.textContent = 'خطأ'; } });
     }
 }
+let watcher_id = null; // متغير لتخزين معرف المتتبع
+
+// دالة لبدء التتبع المستمر في الخلفية
 async function startPersistentTracking(fullUser, attendanceId) {
-    stopPersistentTracking(); 
+    stopPersistentTracking(); // إيقاف أي تتبع سابق
+    
     const locationStatus = document.getElementById('location-status');
-    if (locationStatus) locationStatus.innerHTML = `<p style="color: #22c55e;">التتبع المباشر فعال.</p>`;
-    let wakeLock = null;
-    try {
-        if ('wakeLock' in navigator) {
-            wakeLock = await navigator.wakeLock.request('screen');
-            window.wakeLock = wakeLock; // تخزينه بشكل عام لإلغائه لاحقاً
-            console.log('Screen Wake Lock is active.');
-        }
-    } catch (err) {
-        console.error(`${err.name}, ${err.message}`);
-    }
+    if (locationStatus) locationStatus.innerHTML = `<p style="color: #22c55e;">التتبع الخلفي نشط <i class="ph-bold ph-radar animate-pulse"></i></p>`;
 
-    const UPDATE_INTERVAL_MS = 5000; // الفحص كل 10 ثواني
     let consecutiveOutOfBounds = 0;
-    const OUT_OF_BOUNDS_THRESHOLD = 2; // تسجيل الانسحاب بعد محاولتين
-
-    let firstFailureTimestamp = null;
-    const FAILURE_THRESHOLD_MS = 60 * 1000;
-
-    const handleTrackingError = (geoError) => {
-        console.warn("خطأ مؤقت في التتبع (تتم إعادة المحاولة تلقائياً):", geoError.message);
-        if (firstFailureTimestamp === null) {
-            firstFailureTimestamp = Date.now();
-        } else {
-            if ((Date.now() - firstFailureTimestamp) > FAILURE_THRESHOLD_MS) {
-                console.error("فشل التتبع لمدة تزيد عن دقيقة. سيتم تحديث الصفحة.");
-                window.location.reload();
-            }
-        }
-    };
+    const OUT_OF_BOUNDS_THRESHOLD = 2; // عدد مرات السماح قبل الانسحاب
 
     try {
+        // 1. استخراج الإحداثيات
         let siteCoords, radius;
-
         if (fullUser.contracts) {
             const contract = fullUser.contracts;
             const locationData = contract.contract_locations.find(loc => loc.name === fullUser.specific_location);
-            if (!locationData || !locationData.geofence_link) throw new Error('لم يتم تحديد إحداثيات الموقع في العقد.');
+            if (!locationData || !locationData.geofence_link) throw new Error('لا توجد إحداثيات.');
             siteCoords = parseCoordinates(locationData.geofence_link);
             radius = locationData.geofence_radius || 200;
-        } 
-        else if (fullUser.geofence_link) {
+        } else if (fullUser.geofence_link) {
             siteCoords = parseCoordinates(fullUser.geofence_link);
             radius = fullUser.geofence_radius || 200;
-        } 
-        else {
-            throw new Error('لا يمكن تحديد بيانات الموقع الجغرافي لهذه الوردية.');
+        } else {
+            throw new Error('لا توجد بيانات موقع.');
         }
 
-        if (!siteCoords) throw new Error('إحداثيات موقع العمل غير صالحة.');
+        if (!siteCoords) throw new Error('الإحداثيات غير صالحة.');
 
-        const updateLocation = () => {
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    firstFailureTimestamp = null;
-                    if (locationStatus.innerHTML.includes('خطأ')) {
-                        locationStatus.innerHTML = `<p style="color: #22c55e;">التتبع المباشر فعال.</p>`;
+        // 2. إضافة "مراقب" الموقع (Watcher)
+        watcher_id = await BackgroundGeolocation.addWatcher(
+            {
+                backgroundMessage: "يتم التحقق من موقعك لضمان الالتزام بالوردية.",
+                backgroundTitle: "نظام اركانات",
+                requestPermissions: true,
+                stale: false,
+                distanceFilter: 10 // التحديث كلما تحرك 10 أمتار
+            },
+            async (location, error) => {
+                if (error) {
+                    if (error.code === "NOT_AUTHORIZED") {
+                        if (window.confirm("التطبيق يحتاج لصلاحية الموقع 'طوال الوقت' للعمل في الخلفية. هل تريد فتح الإعدادات؟")) {
+                            BackgroundGeolocation.openSettings();
+                        }
                     }
+                    return console.error(error);
+                }
 
-                    const { latitude, longitude, accuracy } = position.coords;
-                    supabaseClient.from('guard_locations').upsert({ guard_id: currentUser.id, latitude, longitude }, { onConflict: 'guard_id' }).then();
+                // --- منطق فحص المسافة ---
+                const guardCoords = { lat: location.latitude, lng: location.longitude };
+                // تحديث الموقع في الداتا بيس
+                supabaseClient.from('guard_locations').upsert({ guard_id: currentUser.id, latitude: location.latitude, longitude: location.longitude }, { onConflict: 'guard_id' }).then();
 
-                    const distance = calculateDistance(siteCoords, { lat: latitude, lng: longitude });
-                    const effectiveDistance = distance - accuracy;
+                const distance = calculateDistance(siteCoords, guardCoords);
+                // نخصم الدقة (accuracy) لنكون عادلين، لكن بحد أدنى للدقة
+                const accuracy = location.accuracy || 20; 
+                const effectiveDistance = distance - accuracy;
 
-                    if (effectiveDistance > radius) {
-                        consecutiveOutOfBounds++;
-                        console.log(`خارج النطاق، مرة رقم: ${consecutiveOutOfBounds}`);
-                        if (consecutiveOutOfBounds >= OUT_OF_BOUNDS_THRESHOLD) {
-                            const { data: pendingPermission, error: permError } = await supabaseClient
+                console.log(`المسافة الحالية: ${Math.round(distance)}م (الدقة: ${accuracy})`);
+
+                if (effectiveDistance > radius) {
+                    consecutiveOutOfBounds++;
+                    console.log(`⚠️ خارج النطاق (${consecutiveOutOfBounds}/${OUT_OF_BOUNDS_THRESHOLD})`);
+
+                    if (consecutiveOutOfBounds >= OUT_OF_BOUNDS_THRESHOLD) {
+                        // 1. التحقق من الاستئذان
+                        const { data: pendingPermission } = await supabaseClient
                             .from('employee_requests')
                             .select('id')
                             .eq('user_id', currentUser.id)
@@ -4548,56 +4544,61 @@ async function startPersistentTracking(fullUser, attendanceId) {
                             .limit(1)
                             .single();
 
-                        if (permError && permError.code !== 'PGRST116') { // PGRST116 = لم يتم العثور على صفوف
-                            console.error("خطأ أثناء التحقق من الاستئذان، سيتم تسجيل الانسحاب احتياطياً.", permError);
-                        }
-
                         if (pendingPermission) {
-                            console.log("الحارس خارج النطاق، ولكنه قدم طلب استئذان قيد المراجعة. تم إيقاف تسجيل الانسحاب.");
-                            consecutiveOutOfBounds = 0; // إعادة تصفير العداد
+                            console.log("يوجد طلب استئذان، لن يتم الانسحاب.");
+                            consecutiveOutOfBounds = 0;
                         } else {
+                            // 2. تسجيل الانسحاب
+                            console.log("🚨 تسجيل انسحاب بسبب الخروج من الموقع!");
+                            
+                            // إيقاف التتبع
                             stopPersistentTracking();
-                            showToast(`تم تسجيل انسحاب للحارس: ${currentUser.name}`, 'error');
+
+                            // تحديث السجل
                             await supabaseClient.from('attendance').update({ status: 'انسحاب', checkout_at: new Date() }).eq('id', attendanceId);
-                            loadAttendancePage();
+                            
+                            // إرسال إشعار محلي للجوال
+                            if (window.Capacitor) {
+                                const { LocalNotifications } = Capacitor.Plugins; // تأكد من تثبيت هذه الإضافة أيضاً
+                                LocalNotifications.schedule({
+                                    notifications: [{
+                                        title: "تم تسجيل انسحاب!",
+                                        body: "لقد خرجت من نطاق الموقع الجغرافي وتم إنهاء ورديتك.",
+                                        id: 1,
+                                        schedule: { at: new Date(Date.now() + 1000) }
+                                    }]
+                                });
+                            }
+
+                            // تحديث الصفحة إذا كانت مفتوحة
+                            if(typeof loadAttendancePage === 'function') loadAttendancePage();
+                            else window.location.reload();
                         }
-                            stopPersistentTracking();
-                            showToast(`تم تسجيل انسحاب للحارس: ${currentUser.name}`, 'error');
-                            await supabaseClient.from('attendance').update({ status: 'انسحاب', checkout_at: new Date() }).eq('id', attendanceId);
-                            loadAttendancePage();
-                        }
-                    } else {
-                        consecutiveOutOfBounds = 0;
                     }
-                },
-                handleTrackingError,
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-            );
-        };
+                } else {
+                    consecutiveOutOfBounds = 0; // عاد للموقع، تصفير العداد
+                }
+            }
+        );
 
-        updateLocation();
-        locationUpdateInterval = setInterval(updateLocation, UPDATE_INTERVAL_MS);
-
-    } catch(err) {
-        console.error("فشل بدء التتبع:", err.message);
-        if (locationStatus) locationStatus.innerHTML = `<p style="color: #dc3545;">${err.message}</p>`;
+    } catch (err) {
+        console.error("فشل تفعيل التتبع الخلفي:", err);
+        if (locationStatus) locationStatus.innerHTML = `<p style="color:red">فشل التتبع: ${err.message}</p>`;
     }
+}
+
+// دالة إيقاف التتبع
+function stopPersistentTracking() {
+    if (watcher_id !== null) {
+        BackgroundGeolocation.removeWatcher({ id: watcher_id });
+        watcher_id = null;
+    }
+    const locationStatus = document.getElementById('location-status');
+    if (locationStatus) locationStatus.innerHTML = '';
+    console.log('تم إيقاف التتبع الخلفي.');
 }
 let locationUpdateInterval = null;
-function stopPersistentTracking() {
-    if (locationUpdateInterval) {
-        clearInterval(locationUpdateInterval);
-        locationUpdateInterval = null;
-        const locationStatus = document.getElementById('location-status');
-        if (locationStatus) locationStatus.innerHTML = '';
-        console.log('تم إيقاف التتبع المباشر.');
-    }
-    if (locationPermissionStatus) {
-        locationPermissionStatus.onchange = null; // إزالة الحدث
-        locationPermissionStatus = null; // حذف الكائن
-        console.log('تم إيقاف مراقبة صلاحية الموقع.');
-    }
-}
+
 async function fetchJobs() {
     const { data: jobs, error } = await supabaseClient
         .from('jobs')

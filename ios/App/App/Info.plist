@@ -36,6 +36,14 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+<string>نحتاج لتتبع موقعك لضمان التواجد في الوردية حتى أثناء إغلاق التطبيق.</string>
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>نحتاج لتتبع موقعك لتسجيل الحضور.</string>
+<key>UIBackgroundModes</key>
+<array>
+    <string>location</string>
+</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
