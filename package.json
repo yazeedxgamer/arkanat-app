@@ -4,8 +4,9 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "build": "echo 'No build needed for plain HTML/JS'",
+  "postinstall": "npx cap sync android"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
