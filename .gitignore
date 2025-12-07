@@ -1,0 +1,7 @@
+node_modules/
+www/node_modules/
+android/app/build/
+android/.gradle/
+ios/App/App.xcodeproj/project.xcworkspace/
+ios/App/App.xcodeproj/xcuserdata/
+.DS_Store
