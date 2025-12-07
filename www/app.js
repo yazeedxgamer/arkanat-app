@@ -5,7 +5,7 @@ function convertArabicNumeralsToEnglish(str) {
 }
 let pageHiddenTimestamp = null;
 const INACTIVITY_REFRESH_TIME = 5 * 60 * 1000; // 5 دقائق
-
+let watcher_id = null; // متغير لتخزين معرف المتتبع
 document.addEventListener('visibilitychange', () => {
     if (currentUser && currentUser.role === 'حارس أمن') {
         if (document.visibilityState === 'hidden') {
@@ -4468,7 +4468,7 @@ async function loadMapStatistics(filters = {}) {
         Object.values(statsElements).forEach(el => { if (el) { el.textContent = 'خطأ'; } });
     }
 }
-let watcher_id = null; // متغير لتخزين معرف المتتبع
+
 
 // دالة لبدء التتبع المستمر في الخلفية
 async function startPersistentTracking(fullUser, attendanceId) {
@@ -17900,6 +17900,7 @@ initializeUserSession(userProfile);
         loginBtn.innerHTML = 'تسجيل الدخول';
         console.log('%c--- انتهت عملية تسجيل الدخول ---', 'color: blue; font-weight: bold;');
     });
+}
 /**
  * دالة للبحث عن سجل غياب/انسحاب/استئذان وتحديثه عند تأكيد التغطية
  * @param {number} shiftId - معرّف وردية التغطية التي تمت
@@ -17950,7 +17951,7 @@ async function updateOriginalAttendanceOnCoverage(shiftId, coveringGuardName) {
         console.error("Error in updateOriginalAttendanceOnCoverage:", error);
     }
 }
-}
+
 async function loadMyRequestsPage() {
     const requestsContent = document.querySelector('#page-my-requests');
     requestsContent.innerHTML = `
