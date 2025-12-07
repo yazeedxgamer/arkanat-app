@@ -4,8 +4,8 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-  "build": "echo 'No build needed for plain HTML/JS'"
-},
+    "build": "echo 'No build needed for plain HTML/JS'"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -14,6 +14,7 @@
     "@capacitor/android": "^7.4.4",
     "@capacitor/cli": "^7.4.4",
     "@capacitor/core": "^7.4.4",
+    "@capacitor/geolocation": "^7.1.6",
     "@capacitor/ios": "^7.4.4"
   }
 }

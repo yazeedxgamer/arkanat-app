@@ -477,76 +477,62 @@ function updateUIVisibility(role) {
  * دالة مركزية لتهيئة واجهة المستخدم والإشتراكات المباشرة بعد تسجيل الدخول
  * @param {object} userProfile - بيانات المستخدم الذي سجل دخوله
  */
-function initializeUserSession(userProfile) {
+async function initializeUserSession(userProfile) {
     currentUser = userProfile;
 
-if (currentUser.role === 'حارس أمن') {
-        supabaseClient
-            .from('attendance')
-            .select('*')
-            .eq('guard_id', currentUser.id)
-            .eq('status', 'حاضر') 
-            .is('checkout_at', null)
-            .maybeSingle()
-            .then(({ data: activeRecord }) => {
-                if (activeRecord) {
-                    console.log("تم اكتشاف جلسة حضور نشطة. محاولة تفعيل التتبع...");
-                    let trackingDetails = activeRecord.shift_snapshot;
-
-                    if (!trackingDetails || !trackingDetails.geofence_link) {
-                        const vacancy = userProfile.job_vacancies;
-                        const contractLocs = vacancy?.contracts?.contract_locations;
-                        const locationData = contractLocs?.find(l => l.name === userProfile.location);
-                        
-                        if (locationData && locationData.geofence_link) {
-                            trackingDetails = {
-                                ...vacancy,
-                                geofence_link: locationData.geofence_link,
-                                geofence_radius: locationData.geofence_radius || 200
-                            };
-                        }
-                    }
-
-                    if (trackingDetails && trackingDetails.geofence_link) {
-                        startPersistentTracking(trackingDetails, activeRecord.id).catch(err => {
-                            console.warn("لم يتم تفعيل التتبع التلقائي:", err);
-                        });
-                    }
-                }
-            });
-    }
-supabaseClient
-    .channel(`realtime:user:${currentUser.id}`)
-.on('postgres_changes', {
-    event: 'UPDATE',
-    schema: 'public',
-    table: 'users',
-    filter: `id=eq.${currentUser.id}`
-}, async (payload) => {
-    showToast('تم تحديث صلاحياتك من قبل المدير.', 'info');
-    await refreshCurrentUser();
-    updateUIVisibility(currentUser.role);
-    const currentPageId = sessionStorage.getItem('lastVisitedPage');
-    if (currentPageId) {
-        const currentPageLink = document.querySelector(`.sidebar-nav a[data-page="${currentPageId}"]`);
-        if (currentPageLink && currentPageLink.parentElement.style.display === 'none') {
-            const firstAvailableLink = document.querySelector('.sidebar-nav li[style*="display: block"] a');
-
-            if (firstAvailableLink) {
-                firstAvailableLink.click();
-            } else {
-                document.getElementById('logout-btn').click();
+    // --- بداية الإضافة: طلب إذن الموقع للتطبيق (لبيئة الجوال Capacitor) ---
+    if (window.Capacitor) {
+        try {
+            const { Geolocation } = Capacitor.Plugins;
+            const permissionStatus = await Geolocation.checkPermissions();
+            if (permissionStatus.location !== 'granted') {
+                await Geolocation.requestPermissions();
             }
+        } catch (e) {
+            console.log("Error requesting permissions: ", e);
         }
     }
-})
-    .subscribe();
+    // --- نهاية الإضافة ---
+
+    // الاشتراك في التحديثات المباشرة لصلاحيات المستخدم
+    supabaseClient
+        .channel(`realtime:user:${currentUser.id}`)
+        .on('postgres_changes', {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'users',
+            filter: `id=eq.${currentUser.id}`
+        }, async (payload) => {
+            showToast('تم تحديث صلاحياتك من قبل المدير.', 'info');
+            await refreshCurrentUser();
+            updateUIVisibility(currentUser.role);
+            
+            // منطق الطرد الفوري أو إعادة التوجيه
+            const currentPageId = sessionStorage.getItem('lastVisitedPage');
+            if (currentPageId) {
+                const currentPageLink = document.querySelector(`.sidebar-nav a[data-page="${currentPageId}"]`);
+                if (currentPageLink && currentPageLink.parentElement.style.display === 'none') {
+                    const firstAvailableLink = document.querySelector('.sidebar-nav li[style*="display: block"] a');
+                    if (firstAvailableLink) {
+                        firstAvailableLink.click();
+                    } else {
+                        document.getElementById('logout-btn').click();
+                    }
+                }
+            }
+        })
+        .subscribe();
+
+    // تخزين الجلسة وتحديث الواجهة
     sessionStorage.setItem('currentUser', JSON.stringify(userProfile));
     updateUIVisibility(currentUser.role);
     document.getElementById('login-page').style.display = 'none';
     document.querySelector('.dashboard-container').classList.remove('hidden');
+    
     const userProfileSpan = document.querySelector('.user-profile span');
     if (userProfileSpan) userProfileSpan.textContent = `مرحباً، ${currentUser.name}`;
+
+    // عرض الإعلانات والاشتراك بها
     displayActiveAnnouncements();
     supabaseClient
         .channel('public:announcements')
@@ -562,17 +548,20 @@ supabaseClient
 
     console.log('Subscribed to real-time announcements channel.');
 
+    // تحديث التنبيهات والشارات
     updateNotificationBell();
     setInterval(updateNotificationBell, 60000);
 
-    updateSidebarBadges(); // للتحقق فور تسجيل الدخول
-    setInterval(updateSidebarBadges, 60000); // للتحقق كل دقيقة
+    updateSidebarBadges(); 
+    setInterval(updateSidebarBadges, 60000); 
+
+    // اشتراك مباشر لتحديث الشارات
     const realtimeChannel = supabaseClient
         .channel('public:all_tables:badges')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_requests' }, () => updateSidebarBadges())
         .on('postgres_changes', { event: '*', schema: 'public', table: 'job_applications' }, () => updateSidebarBadges())
         .on('postgres_changes', { event: '*', schema: 'public', table: 'coverage_applicants' }, () => updateSidebarBadges())
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'directives' }, () => updateSidebarBadges()) // <-- السطر الجديد
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'directives' }, () => updateSidebarBadges())
         .on('postgres_changes', { event: '*', schema: 'public', table: 'job_vacancies', filter: `id=eq.${userProfile.vacancy_id}` }, (payload) => {
             console.log('Vacancy details changed, checking if attendance page is active.');
             if (document.querySelector('#page-attendance:not(.hidden)')) {
@@ -583,18 +572,24 @@ supabaseClient
         .subscribe();
 
     handleRouteChange(true);
+
+    // التحقق من وجود جلسة حضور نشطة للحراس لاستئناف التتبع
     if (currentUser.role === 'حارس أمن') {
         supabaseClient
             .from('attendance')
             .select('*')
             .eq('guard_id', currentUser.id)
-            .eq('status', 'حاضر') // يشمل التحضير اليدوي والآلي
+            .eq('status', 'حاضر') 
             .is('checkout_at', null)
             .maybeSingle()
             .then(({ data: activeRecord }) => {
                 if (activeRecord) {
                     console.log("تم اكتشاف جلسة حضور نشطة. محاولة تفعيل التتبع...");
+                    
+                    // محاولة استخراج بيانات الموقع من "لقطة الوردية"
                     let trackingDetails = activeRecord.shift_snapshot;
+
+                    // إذا لم تكن اللقطة موجودة، نستخدم بيانات الموظف الحالية
                     if (!trackingDetails || !trackingDetails.geofence_link) {
                         const vacancy = userProfile.job_vacancies;
                         const contractLocs = vacancy?.contracts?.contract_locations;
@@ -602,12 +597,14 @@ supabaseClient
                         
                         if (locationData && locationData.geofence_link) {
                             trackingDetails = {
-                                ...vacancy, // بيانات الشاغر
+                                ...vacancy, 
                                 geofence_link: locationData.geofence_link,
                                 geofence_radius: locationData.geofence_radius || 200
                             };
                         }
                     }
+
+                    // تشغيل التتبع إذا توفرت البيانات
                     if (trackingDetails && trackingDetails.geofence_link) {
                         startPersistentTracking(trackingDetails, activeRecord.id).catch(err => {
                             console.warn("لم يتم تفعيل التتبع التلقائي (ربما تم الرفض):", err);
@@ -617,7 +614,6 @@ supabaseClient
             });
     }
 }
-
 
 async function refreshCurrentUser() {
     if (currentUser && currentUser.id) {
